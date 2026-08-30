@@ -1,67 +1,139 @@
 #include <WiFi.h>
 #include <WebServer.h>
-#include <time.h>
 
 #include <Wire.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <Adafruit_TCS34725.h>
 
-// ============================================================================
-// CALIBRATION AND CONFIGURATION
-// Keep these values at the top so calibration changes are easy to find.
-// ============================================================================
+// ========================================
+// WIFI CONFIGURATION
+// ========================================
 
-const char* WIFI_SSID = "GFiber_05D31";
-const char* WIFI_PASSWORD = "FFZwDKWF";
+const char* ssid = "GFiber_05D31";
+const char* password = "FFZwDKWF";
 
-const int SIM800A_RX = 16;
-const int SIM800A_TX = 17;
-const char* PHONE_NUMBER = "+639569563247";
-
-const int ONE_WIRE_BUS = 4;
-const int DO_PIN = 34;
-const int RELAY_PIN = 26;
-const int I2C_SDA = 21;
-const int I2C_SCL = 22;
-
-const uint8_t COLOR_INTEGRATION_TIME = TCS34725_INTEGRATIONTIME_154MS;
-const uint8_t COLOR_GAIN = TCS34725_GAIN_4X;
-
-float DO_SLOPE = 3.30;
-float DO_OFFSET = 0.00;
-const float ADC_REFERENCE = 3.30;
-const float ADC_MAX_VALUE = 4095.0;
-
-const float ALGAE_GREEN_THRESHOLD = 0.35;
-const float DO_AERATOR_ON = 1.0;
-const float DO_AERATOR_OFF = 2.0;
-const bool RELAY_ACTIVE_LOW = true;
-
-const float TEMP_HIGH_ALERT = 32.0;
-const float TEMP_LOW_ALERT = 20.0;
-const float TEMP_HIGH_RESET = 31.0;
-const float TEMP_LOW_RESET = 21.0;
-
-const unsigned long SMS_COOLDOWN = 60000UL;
-const unsigned long SENSOR_INTERVAL = 2000UL;
-const char* NTP_SERVER = "pool.ntp.org";
-const long UTC_OFFSET_SECONDS = 0;
-const int DAYLIGHT_OFFSET_SECONDS = 0;
+// const char* ssid = "YOTC-FB0FBF";
+// const char* password = "77531305";
 
 // ========================================
-// HARDWARE AND SERVER OBJECTS
+// SIM800A SMS CONFIGURATION
 // ========================================
+//
+// ESP32 UART2
+//
+// SIM800A TX  -> ESP32 GPIO16
+// SIM800A RX  -> ESP32 GPIO17
+// SIM800A GND -> ESP32 GND
+//
+// IMPORTANT:
+// SIM800A needs a proper power supply capable
+// of handling its transmission current peaks.
+//
+
+#define SIM800A_RX 16
+#define SIM800A_TX 17
 
 HardwareSerial sim800a(2);
+
+// CHANGE THIS NUMBER
+//const char* PHONE_NUMBER = "+639610732412";
+// const char* PHONE_NUMBER = "+639569563247";
+ const char* PHONE_NUMBER = "+639499114258";
+// const char* PHONE_NUMBER = "+639912271707";
+
+// ========================================
+// PIN CONFIGURATION
+// ========================================
+
+// DS18B20 Temperature Sensor
+#define ONE_WIRE_BUS 4
+
+// Gravity Analog Dissolved Oxygen Sensor
+#define DO_PIN 34
+
+// 5V relay controlling the aerator
+#define RELAY_PIN 26
+
+// TCS34725 I2C
+#define I2C_SDA 21
+#define I2C_SCL 22
+
+// ========================================
+// DS18B20 SETUP
+// ========================================
+
 OneWire oneWire(ONE_WIRE_BUS);
+
 DallasTemperature waterTemp(&oneWire);
+
+// ========================================
+// TCS34725 COLOR SENSOR
+// ========================================
+
 Adafruit_TCS34725 tcs =
   Adafruit_TCS34725(
     TCS34725_INTEGRATIONTIME_154MS,
     TCS34725_GAIN_4X
   );
+
+// ========================================
+// WEB SERVER
+// ========================================
+
 WebServer server(80);
+
+// ========================================
+// DISSOLVED OXYGEN CALIBRATION
+// ========================================
+//
+// IMPORTANT:
+// These are placeholder values.
+// You need to calibrate the DO sensor
+// for an accurate mg/L reading.
+//
+
+float DO_SLOPE = 3.30;
+float DO_OFFSET = 0.00;
+
+const float ADC_REFERENCE = 3.3;
+
+// ========================================
+// ALGAE / GREEN THRESHOLD
+// ========================================
+
+// const float ALGAE_GREEN_THRESHOLD = 0.40;
+const float ALGAE_GREEN_THRESHOLD = 0.35;
+
+// ========================================
+// AUTOMATIC AERATION
+// ========================================
+//
+// Aerator turns ON when:
+// DO < 2.0 mg/L
+// OR green index >= 0.40
+//
+// Aerator turns OFF when:
+// DO >= 2.5 mg/L
+// AND green index < 0.40
+//
+
+// const float DO_AERATOR_ON = 2.0;
+// const float DO_AERATOR_OFF = 2.5;
+const float DO_AERATOR_ON = 1.0;
+const float DO_AERATOR_OFF = 2.0;
+
+const bool RELAY_ACTIVE_LOW = true;
+
+// ========================================
+// TEMPERATURE ALERT THRESHOLDS
+// ========================================
+
+const float TEMP_HIGH_ALERT = 32.0;
+const float TEMP_LOW_ALERT = 20.0;
+
+const float TEMP_HIGH_RESET = 31.0;
+const float TEMP_LOW_RESET = 21.0;
 
 // ========================================
 // SENSOR VARIABLES
@@ -99,8 +171,6 @@ float greenIndex = 0.0;
 
 bool lowDOAlert = false;
 bool highAlgaeAlert = false;
-String lastSMSAlert = "";
-String lastSMSTimestamp = "";
 
 bool highTempSMSAlert = false;
 bool lowTempSMSAlert = false;
@@ -108,32 +178,15 @@ bool lowTempSMSAlert = false;
 // Prevent SMS flooding
 unsigned long lastSMSSent = 0;
 
+const unsigned long SMS_COOLDOWN = 60000UL; // 1 minute
+
 // ========================================
 // SENSOR INTERVAL
 // ========================================
 
 unsigned long lastSensorRead = 0;
 
-String getCurrentTimestamp() {
-  struct tm timeInfo;
-
-  if (getLocalTime(&timeInfo, 1000)) {
-    char timestamp[25];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeInfo);
-    return String(timestamp);
-  }
-
-  return String("uptime_ms:") + String(millis());
-}
-
-String escapeJson(const String& value) {
-  String escaped = value;
-  escaped.replace("\\", "\\\\");
-  escaped.replace("\"", "\\\"");
-  escaped.replace("\n", "\\n");
-  escaped.replace("\r", "\\r");
-  return escaped;
-}
+const unsigned long SENSOR_INTERVAL = 2000;
 
 // ========================================
 // CORS HEADERS
@@ -275,8 +328,6 @@ bool sendSMS(String message) {
   Serial.println("SMS command completed.");
 
   lastSMSSent = millis();
-  lastSMSAlert = message;
-  lastSMSTimestamp = getCurrentTimestamp();
 
   Serial.println("==============================");
 
@@ -902,6 +953,7 @@ void printSensorValues() {
   );
 }
 
+
 // ========================================
 // READ ALL SENSORS
 // ========================================
@@ -1078,14 +1130,6 @@ void handleSensors() {
     highAlgaeAlert
       ? "true"
       : "false";
-
-  json += ",\"sms_alert\":\"";
-  json += escapeJson(lastSMSAlert);
-  json += "\"";
-
-  json += ",\"sms_timestamp\":\"";
-  json += lastSMSTimestamp;
-  json += "\"";
 
   json += "}";
 
@@ -1414,8 +1458,8 @@ void setup() {
   );
 
   WiFi.begin(
-    WIFI_SSID,
-    WIFI_PASSWORD
+    ssid,
+    password
   );
 
   while (
@@ -1432,12 +1476,6 @@ void setup() {
 
   Serial.println(
     "WiFi Connected!"
-  );
-
-  configTime(
-    UTC_OFFSET_SECONDS,
-    DAYLIGHT_OFFSET_SECONDS,
-    NTP_SERVER
   );
 
   Serial.print(
