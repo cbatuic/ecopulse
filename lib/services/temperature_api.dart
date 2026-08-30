@@ -5,13 +5,25 @@ import 'package:http/http.dart' as http;
 import '../models/sensor_snapshot.dart';
 
 class TemperatureApi {
-  TemperatureApi({http.Client? client}) : _client = client ?? http.Client();
+  TemperatureApi({http.Client? client, String endpoint = 'http://192.168.8.34/sensors'})
+      : _client = client ?? http.Client(),
+        _endpoint = Uri.parse(endpoint);
 
-  static final Uri endpoint = Uri.parse('http://192.168.254.160/sensors');
   final http.Client _client;
+  Uri _endpoint;
+
+  String get endpoint => _endpoint.toString();
+
+  void setEndpoint(String value) {
+    final uri = Uri.tryParse(value.trim());
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      throw const FormatException('Enter a valid HTTP API URL');
+    }
+    _endpoint = uri;
+  }
 
   Future<SensorSnapshot> fetchSensors() async {
-    final response = await _client.get(endpoint).timeout(const Duration(seconds: 4));
+    final response = await _client.get(_endpoint).timeout(const Duration(seconds: 4));
     if (response.statusCode != 200) {
       throw Exception('Sensors API returned ${response.statusCode}');
     }
@@ -49,6 +61,10 @@ class TemperatureApi {
       aeratorOn: payload['aerator_on'] as bool,
       temperatureHighAlert: payload['temperature_high_alert'] as bool,
       temperatureLowAlert: payload['temperature_low_alert'] as bool,
+      smsAlert: payload['sms_alert'] as String? ?? '',
+      smsTimestamp: payload['sms_timestamp'] as String? ?? '',
+      lowDoSmsAlert: payload['low_do_sms_alert'] as bool? ?? false,
+      highAlgaeSmsAlert: payload['high_algae_sms_alert'] as bool? ?? false,
     );
   }
 

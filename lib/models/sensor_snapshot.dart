@@ -14,6 +14,10 @@ class SensorSnapshot {
   final bool aeratorOn;
   final bool temperatureHighAlert;
   final bool temperatureLowAlert;
+  final String smsAlert;
+  final String smsTimestamp;
+  final bool lowDoSmsAlert;
+  final bool highAlgaeSmsAlert;
 
   const SensorSnapshot({
     required this.temperature,
@@ -31,5 +35,9 @@ class SensorSnapshot {
     required this.aeratorOn,
     required this.temperatureHighAlert,
     required this.temperatureLowAlert,
+    this.smsAlert = '',
+    this.smsTimestamp = '',
+    this.lowDoSmsAlert = false,
+    this.highAlgaeSmsAlert = false,
   });
 }
