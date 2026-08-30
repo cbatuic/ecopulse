@@ -9,67 +9,58 @@
 
 // ============================================================================
 // CALIBRATION AND CONFIGURATION
-// Change values in this section only when wiring, calibrating, or tuning the
-// pond monitoring behavior. Keep the numbered order during calibration.
+// Keep these values at the top so calibration changes are easy to find.
 // ============================================================================
 
-// 01. Wi-Fi connection
 const char* WIFI_SSID = "GFiber_05D31";
 const char* WIFI_PASSWORD = "FFZwDKWF";
 
-// 02. SIM800A wiring and SMS recipient
 const int SIM800A_RX = 16;
 const int SIM800A_TX = 17;
 const char* PHONE_NUMBER = "+639569563247";
 
-// 03. Sensor and actuator pins
-const int ONE_WIRE_BUS = 4;  // DS18B20 data pin
-const int DO_PIN = 34;       // Gravity analog DO sensor
-const int RELAY_PIN = 26;    // Aerator relay
-const int I2C_SDA = 21;      // TCS34725 SDA
-const int I2C_SCL = 22;      // TCS34725 SCL
+const int ONE_WIRE_BUS = 4;
+const int DO_PIN = 34;
+const int RELAY_PIN = 26;
+const int I2C_SDA = 21;
+const int I2C_SCL = 22;
 
-// 04. TCS34725 color sensor calibration
-const tcs34725IntegrationTime_t COLOR_INTEGRATION_TIME = TCS34725_INTEGRATIONTIME_154MS;
-const tcs34725Gain_t COLOR_GAIN = TCS34725_GAIN_4X;
+const uint8_t COLOR_INTEGRATION_TIME = TCS34725_INTEGRATIONTIME_154MS;
+const uint8_t COLOR_GAIN = TCS34725_GAIN_4X;
 
-// 05. Dissolved oxygen calibration
-// DO (mg/L) = (measured voltage * DO_SLOPE) + DO_OFFSET
 float DO_SLOPE = 3.30;
 float DO_OFFSET = 0.00;
 const float ADC_REFERENCE = 3.30;
 const float ADC_MAX_VALUE = 4095.0;
 
-// 06. Green-index / algae threshold
 const float ALGAE_GREEN_THRESHOLD = 0.35;
-
-// 07. Automatic aeration thresholds
-const float DO_AERATOR_ON = 1.00;
-const float DO_AERATOR_OFF = 2.00;
+const float DO_AERATOR_ON = 1.0;
+const float DO_AERATOR_OFF = 2.0;
 const bool RELAY_ACTIVE_LOW = true;
 
-// 08. Temperature alert and reset thresholds (degrees Celsius)
 const float TEMP_HIGH_ALERT = 32.0;
 const float TEMP_LOW_ALERT = 20.0;
 const float TEMP_HIGH_RESET = 31.0;
 const float TEMP_LOW_RESET = 21.0;
 
-// 09. Timing calibration (milliseconds)
 const unsigned long SMS_COOLDOWN = 60000UL;
 const unsigned long SENSOR_INTERVAL = 2000UL;
 const char* NTP_SERVER = "pool.ntp.org";
 const long UTC_OFFSET_SECONDS = 0;
 const int DAYLIGHT_OFFSET_SECONDS = 0;
 
-// ============================================================================
+// ========================================
 // HARDWARE AND SERVER OBJECTS
-// ============================================================================
+// ========================================
 
 HardwareSerial sim800a(2);
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature waterTemp(&oneWire);
 Adafruit_TCS34725 tcs =
-  Adafruit_TCS34725(COLOR_INTEGRATION_TIME, COLOR_GAIN);
+  Adafruit_TCS34725(
+    TCS34725_INTEGRATIONTIME_154MS,
+    TCS34725_GAIN_4X
+  );
 WebServer server(80);
 
 // ========================================
@@ -114,17 +105,19 @@ String lastSMSTimestamp = "";
 bool highTempSMSAlert = false;
 bool lowTempSMSAlert = false;
 
-// Runtime state: prevent SMS flooding
+// Prevent SMS flooding
 unsigned long lastSMSSent = 0;
+
+// ========================================
+// SENSOR INTERVAL
+// ========================================
 
 unsigned long lastSensorRead = 0;
 
 String getCurrentTimestamp() {
-
   struct tm timeInfo;
 
   if (getLocalTime(&timeInfo, 1000)) {
-
     char timestamp[25];
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeInfo);
     return String(timestamp);
@@ -134,7 +127,6 @@ String getCurrentTimestamp() {
 }
 
 String escapeJson(const String& value) {
-
   String escaped = value;
   escaped.replace("\\", "\\\\");
   escaped.replace("\"", "\\\"");
@@ -661,7 +653,7 @@ void readDissolvedOxygen() {
     analogRead(DO_PIN);
 
   doVoltage =
-    (doRawValue / ADC_MAX_VALUE) *
+    (doRawValue / 4095.0) *
     ADC_REFERENCE;
 
   // Estimated DO calculation
@@ -743,12 +735,24 @@ void printSensorValues() {
     "       ESP32 FISH POND SENSOR DATA"
   );
 
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
-
   Serial.println(
     "========================================"
   );
+
+  // WIFI / IP ADDRESS
+
+  Serial.print("WiFi Status: ");
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("CONNECTED");
+  } else {
+    Serial.println("DISCONNECTED");
+  }
+
+  Serial.print("ESP32 IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  Serial.println();
 
   // AERATOR
 
@@ -1074,8 +1078,6 @@ void handleSensors() {
     highAlgaeAlert
       ? "true"
       : "false";
-
-  // Latest SMS payload
 
   json += ",\"sms_alert\":\"";
   json += escapeJson(lastSMSAlert);

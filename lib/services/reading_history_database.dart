@@ -8,7 +8,6 @@ import '../models/reading_history_point.dart';
 
 class ReadingHistoryDatabase {
   Database? _database;
-  Database? _referenceDatabase;
 
   Future<Database> get database async {
     return _database ??= await _open();
@@ -16,6 +15,7 @@ class ReadingHistoryDatabase {
 
   Future<Database> _open() async {
     final db = await databaseFactoryFfiWeb.openDatabase('ecopulse_history.db');
+
     await db.execute('''
       CREATE TABLE IF NOT EXISTS sensor_readings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,35 +26,40 @@ class ReadingHistoryDatabase {
         aerator_on INTEGER NOT NULL DEFAULT 0
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS bantai_reference (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recorded_at INTEGER NOT NULL,
+        temperature REAL NOT NULL,
+        dissolved_oxygen REAL NOT NULL,
+        green_index REAL NOT NULL,
+        aerator_on INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
     try {
       await db.execute('ALTER TABLE sensor_readings ADD COLUMN aerator_on INTEGER NOT NULL DEFAULT 0');
     } catch (_) {
       // Existing databases already have the column.
     }
+
+    final referenceRows = await _queryRows(
+      db,
+      tableName: 'bantai_reference',
+      columns: ['id'],
+      limit: 1,
+    );
+
+    if (referenceRows.isEmpty) {
+      await _seedReferenceData(db);
+    }
+
     return db;
   }
 
   Future<Database> get referenceDatabase async {
-    return _referenceDatabase ??= await _openReference();
-  }
-
-  Future<Database> _openReference() async {
-    final db = await databaseFactoryFfiWeb.openDatabase('ecopulse_bantai_reference.db');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS sensor_readings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        recorded_at INTEGER NOT NULL,
-        temperature REAL NOT NULL,
-        dissolved_oxygen REAL NOT NULL,
-        green_index REAL NOT NULL,
-        aerator_on INTEGER NOT NULL DEFAULT 0
-      )
-    ''');
-    final existingRows = await _queryRows(db, columns: ['id'], limit: 1);
-    if (existingRows.isEmpty) {
-      await _seedReferenceData(db);
-    }
-    return db;
+    return database;
   }
 
   Future<void> _seedReferenceData(Database db) async {
@@ -68,7 +73,7 @@ class ReadingHistoryDatabase {
       final dissolvedOxygen = 6.8 - (day * 0.006) + dailyCycle * 0.35;
       final greenIndex = (0.28 + day * 0.0012 + (dailyCycle + 1) * 0.018).clamp(0.18, 0.52);
       final aeratorOn = dissolvedOxygen < 6.25 || index % 11 == 0;
-      await db.insert('sensor_readings', {
+      await db.insert('bantai_reference', {
         'recorded_at': timestamp.millisecondsSinceEpoch,
         'temperature': double.parse(temperature.toStringAsFixed(3)),
         'dissolved_oxygen': double.parse(dissolvedOxygen.toStringAsFixed(3)),
@@ -92,13 +97,13 @@ class ReadingHistoryDatabase {
 
   Future<List<ReadingHistoryPoint>> all({int limit = 5000}) async {
     final db = await database;
-    final rows = await _queryRows(db, orderBy: 'recorded_at ASC', limit: limit);
+    final rows = await _queryRows(db, tableName: 'sensor_readings', orderBy: 'recorded_at ASC', limit: limit);
     return rows.map(_fromRow).toList();
   }
 
   Future<List<ReadingHistoryPoint>> recent({int limit = 24}) async {
     final db = await database;
-    final rows = await _queryRows(db, orderBy: 'recorded_at DESC', limit: limit);
+    final rows = await _queryRows(db, tableName: 'sensor_readings', orderBy: 'recorded_at DESC', limit: limit);
     return rows.reversed.map(_fromRow).toList();
   }
 
@@ -110,6 +115,7 @@ class ReadingHistoryDatabase {
     final db = await database;
     final rows = await _queryRows(
       db,
+      tableName: 'sensor_readings',
       where: 'recorded_at >= ? AND recorded_at <= ?',
       whereArgs: [start.millisecondsSinceEpoch, end.millisecondsSinceEpoch],
       orderBy: 'recorded_at ASC',
@@ -124,9 +130,10 @@ class ReadingHistoryDatabase {
     required DateTime end,
     int limit = 5000,
   }) async {
-    final db = await referenceDatabase;
+    final db = await database;
     final rows = await _queryRows(
       db,
+      tableName: 'bantai_reference',
       where: 'recorded_at >= ? AND recorded_at <= ?',
       whereArgs: [start.millisecondsSinceEpoch, end.millisecondsSinceEpoch],
       orderBy: 'recorded_at ASC',
@@ -145,6 +152,7 @@ class ReadingHistoryDatabase {
 
   Future<List<Map<String, Object?>>> _queryRows(
     Database db, {
+    required String tableName,
     List<String>? columns,
     String? where,
     List<Object?>? whereArgs,
@@ -152,7 +160,7 @@ class ReadingHistoryDatabase {
     int? limit,
   }) async {
     final dynamic result = await db.query(
-      'sensor_readings',
+      tableName,
       columns: columns,
       where: where,
       whereArgs: whereArgs,
@@ -165,8 +173,6 @@ class ReadingHistoryDatabase {
 
   Future<void> close() async {
     await _database?.close();
-    await _referenceDatabase?.close();
     _database = null;
-    _referenceDatabase = null;
   }
 }
